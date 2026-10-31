@@ -97,19 +97,18 @@ everywhere: press Enter to start typing, Enter/Done to submit, Back to stop.
 
 ## Publish and install
 
-The module must live at the root of a **public** repo. This folder is in a private repo, so
-export it:
+**Install on the TV:** open TizenBrew, press **Green** for the module manager, choose
+**Add GitHub Module**, type `jiljam/TizenShield`, then launch TizenShield.
 
-1. On GitHub, create an empty public repo `jiljam/TizenShield` (no README).
-2. Push this folder's history to it:
-   ```sh
-   git clone https://github.com/jiljam/RandomIdeasRepo.git && cd RandomIdeasRepo
-   git checkout ccr-758c7cca-ei7qyo
-   git subtree split --prefix=tizenshield -b tizenshield-main
-   git push https://github.com/jiljam/TizenShield.git tizenshield-main:main
-   ```
-3. On the TV: open TizenBrew, press **Green** for the module manager, choose
-   **Add GitHub Module**, type `jiljam/TizenShield`, then launch TizenShield.
+The module is published from the root of the **public** repo
+[`jiljam/TizenShield`](https://github.com/jiljam/TizenShield), because TizenBrew loads modules
+through jsDelivr, which can't read private repos. If it's developed as a folder inside another
+repo, publish that folder's history with:
+
+```sh
+git subtree split --prefix=tizenshield -b tizenshield-main
+git push https://github.com/jiljam/TizenShield.git tizenshield-main:main
+```
 
 If the repo ends up under another name or owner, change `websiteURL` in `package.json` to match
 (`gh%2F<owner>%2F<repo>`), rebuild and push.

@@ -7,9 +7,12 @@ var BAR = STYLE.reset + 'position:fixed;left:0;right:0;top:0;z-index:' + Z_TOP +
 var ROW = STYLE.reset + 'display:block;margin-top:18px;';
 var HINT = STYLE.reset + 'display:block;margin:4px 0 8px;font-size:22px;color:#a9abb8;';
 var BUTTON = STYLE.button + 'margin-bottom:14px;';
+var PRIMARY = BUTTON + 'background:' + ACCENT + ';border-color:' + ACCENT + ';color:#fff;font-weight:bold;';
+var PRIMARY_FOCUS = 'border-color:#fff;';
 
 // The toolbar that the Green key opens over any website. `actions` holds the
-// handlers; label functions are re-read each time the toolbar opens.
+// handlers. Each time the toolbar opens it calls actions.onOpen, then re-reads
+// label functions and hides buttons whose visible() returns false.
 export function createToolbar(actions) {
   var previousFocus = null;
   var root = el('div', { id: 'tizenshield-toolbar', style: BAR });
@@ -23,9 +26,10 @@ export function createToolbar(actions) {
   var dynamic = [];
   actions.buttons.forEach(function (spec) {
     var button = el('button', { type: 'button', onclick: spec.run });
-    focusStyle(button, BUTTON, STYLE.buttonFocus);
-    button.textContent = typeof spec.label === 'function' ? spec.label() : spec.label;
-    if (typeof spec.label === 'function') dynamic.push({ node: button, label: spec.label });
+    if (spec.primary) focusStyle(button, PRIMARY, PRIMARY_FOCUS);
+    else focusStyle(button, BUTTON, STYLE.buttonFocus);
+    if (typeof spec.label === 'function' || spec.visible) dynamic.push({ node: button, spec: spec });
+    else button.textContent = spec.label;
     row.appendChild(button);
   });
   root.appendChild(row);
@@ -41,7 +45,12 @@ export function createToolbar(actions) {
   function open() {
     // Single-page sites sometimes rebuild the whole document; re-attach if so.
     if (!root.parentNode) document.documentElement.appendChild(root);
-    dynamic.forEach(function (d) { d.node.textContent = d.label(); });
+    if (actions.onOpen) actions.onOpen();
+    dynamic.forEach(function (d) {
+      var label = d.spec.label;
+      d.node.textContent = typeof label === 'function' ? label() : label;
+      d.node.style.display = !d.spec.visible || d.spec.visible() ? 'inline-block' : 'none';
+    });
     address.value = window.location.href;
     previousFocus = document.activeElement;
     root.style.display = 'block';

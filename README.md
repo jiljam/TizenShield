@@ -4,14 +4,15 @@ A remote-friendly web browser with ad hiding for Samsung Tizen TVs, built as a
 [TizenBrew](https://github.com/reisxd/TizenBrew) module. It's not a port of Brave (that isn't
 possible on Tizen): it gives the TV's built-in web engine a Brave-like start page, remote-control
 browsing and cosmetic ad hiding, on top of DNS-level ad blocking (NextDNS, AdGuard DNS or Pi-hole).
+Video files found on a page play in a full-screen player that uses the TV's hardware decoder.
 
-Status: first version built and tested in desktop Chromium (`npm test`, `npm run smoke`).
+Status: v0.2, built and tested in desktop Chromium (`npm test`, `npm run smoke`).
 Not yet tried on a TV; see [First test on the TV](#first-test-on-the-tv).
 
 | Decision | Choice |
 |---|---|
 | Target TV | 2017 (Tizen 3.0, Chrome 47 engine), so output is ES5 |
-| Scope | Start page + toolbar over websites + ad hiding |
+| Scope | Start page + toolbar over websites + ad hiding + "Play on TV player" |
 | Build | Plain JS, esbuild bundle, Babel to ES5, checked by an ES5-only parser |
 | Publishing | Public GitHub repo `jiljam/TizenShield` (TizenBrew loads modules through jsDelivr, which can't read private repos) |
 
@@ -27,8 +28,24 @@ Verified against TizenBrew's source (`service-nextgen/service/utils/debugger.js`
   (`127.0.0.1:8081/module/<name>/...`, which fetches from jsDelivr). No other hosting is needed.
 - The start page keeps bookmarks, history and the search-engine setting in its `localStorage`.
   Websites can't read that, so they send requests in the start page's URL fragment:
-  `start.html#go=<typed text>` (open/search and record it) and `start.html#add=<url>&title=<t>`
-  (bookmark it, then return).
+  `start.html#go=<typed text>` (open/search and record it), `start.html#add=<url>&title=<t>`
+  (bookmark it, then return) and `start.html#play=<video url>&title=<t>&from=<page>` (play it).
+
+### Play on TV player
+
+The same approach as Stremio clients such as [Kai](https://github.com/ITzAkai/kai): don't use
+the website's own player (most need a newer browser than Chrome 47); hand the TV a plain video URL
+instead. On Samsung TVs, `<video>` is backed by the hardware decoder, so it plays MKV and MP4 with
+H.264, HEVC and AC3, and HLS (`.m3u8`) streams, which desktop browsers can't.
+
+- **Found:** links to video files (`.mp4 .mkv .webm .m4v .mov .avi .ts .m2ts .m3u8`) and
+  `<video>` elements playing a plain web address. Videos fed through Media Source (`blob:`
+  addresses: YouTube, Dailymotion, most big streaming sites) can't be handed over.
+- **Opened from:** the highlighted **Play on TV player** button, first in the Green toolbar (with
+  a chooser when a page has several videos), the remote's **Play** key, or OK on a video link.
+  A hint appears when a page has a video.
+- **Plays on the start page**, not over the website: no site scripts competing for the TV's
+  memory, no site security policy in the way, and the decoder is released when you leave.
 
 ```
  TizenBrew ──opens──▶ start.html ◀──#go= / #add=──┐
@@ -40,7 +57,9 @@ Verified against TizenBrew's source (`service-nextgen/service/utils/debugger.js`
 | File | Role |
 |---|---|
 | `src/main.js` | Entry: decides start page vs. website vs. frame; skips TizenBrew's own pages |
-| `src/launcher.js` | Start page: search box, engine switch, bookmark tiles, recent history |
+| `src/launcher.js` | Start page router (home or player) and the home screen: search, engine switch, bookmarks, history |
+| `src/player.js` | Full-screen hardware player: controls, batched seeking, resume, audio tracks, errors |
+| `src/detect.js`, `src/picker.js`, `src/video.js` | Finding videos on a page, the "which video?" chooser, URL/format helpers |
 | `src/site.js`, `src/toolbar.js` | On websites: remote keys, Green toolbar, Back, Home, Bookmark |
 | `src/spatialnav.js` | Arrow keys move between links; scrolls when nothing is in reach |
 | `src/adhide.js`, `src/filters.js` | Cosmetic filters; script fallback for sites whose CSP blocks `<style>` |
@@ -57,6 +76,21 @@ Verified against TizenBrew's source (`service-nextgen/service/utils/debugger.js`
 | Green | Jump to search box | Open/close toolbar (address bar, back, forward, reload, ...) |
 | Yellow | On a bookmark: press twice to remove | Bookmark this page |
 | Blue | - | Send arrows/Back to the site instead (for sites with their own TV controls); press again to switch back |
+| Play | - | Play the page's video on the TV player (only when the page has one) |
+
+In the player:
+
+| Key | Action |
+|---|---|
+| OK, Play/Pause | Play / pause (OK on a button presses it) |
+| Left / Right, Rewind / Fast-forward | Skip -10 s / +30 s; repeated presses add up into one seek |
+| Down / Up | Move between the seek bar and the buttons |
+| Back | Hide the controls while playing; otherwise close the player |
+| Stop | Close the player |
+| Yellow | Next audio track (when the video has several) |
+| Red | Start page |
+
+Videos resume where you stopped (except in the first or last 30 seconds).
 
 Our text fields stay read-only while focus passes over them so the TV keyboard doesn't pop up
 everywhere: press Enter to start typing, Enter/Done to submit, Back to stop.
@@ -92,11 +126,12 @@ open these once in any browser, then restart TizenBrew:
 ```sh
 npm install
 npm run build   # dist/userScript.js + dist/start.html; fails on non-ES5 output or APIs Chrome 47 lacks
-npm test        # unit tests (address parsing, storage)
+npm test        # unit tests (address parsing, storage, video helpers)
 npm run smoke   # end-to-end in desktop Chromium; needs Playwright; screenshots in test/out/
 ```
 
-On a desktop keyboard: Esc = Back, F1-F4 = Red, Green, Yellow, Blue.
+On a desktop keyboard: Esc = Back, F1-F4 = Red, Green, Yellow, Blue, Space or the media key =
+Play/Pause. The smoke test generates its test video with `ffmpeg`.
 
 Ad filters are in `src/filters.js`: generic selectors, plus a per-site map for extra ones. Keep
 them to CSS3 selectors; on the TV, the script skips any its engine can't parse.
@@ -116,6 +151,10 @@ Desktop tests can't answer these; please note what happens:
    OK, a later version can store bookmarks in a TizenBrew service instead of the start page,
    which removes the extra page load when bookmarking.
 6. **Speed:** is moving between links on a heavy site noticeably slow?
+7. **Video:** open a page that links to an MP4 or MKV file (for example a public-domain film on
+   archive.org: open a film's page, then its download options): does **Play on TV player**
+   appear and play, do Play/Pause and Fast-forward on the remote work, and does seeking work?
+   If a video has two audio languages, does Yellow switch them?
 
 ## Known limitations
 
@@ -130,3 +169,8 @@ Desktop tests can't answer these; please note what happens:
 - Elements inside scrollable boxes on a page can be reached, but the box itself isn't scrolled
   by the arrows.
 - The page is shown at the TV's default zoom; tiny desktop layouts stay tiny.
+- The player can't play YouTube, Dailymotion or other sites that stream through Media Source;
+  only plain video files and HLS links. It has no subtitles yet.
+- Some hosts only serve a video to their own pages (they check the referring page or need a
+  login cookie); those show "The video couldn't be downloaded". Hosts without HTTP range support
+  can't be skipped through; the player says so.

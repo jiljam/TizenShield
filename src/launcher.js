@@ -5,8 +5,10 @@ import { move } from './spatialnav.js';
 import {
   addBookmark, addHistory, clearHistory, getBookmarks, getHistory, getSettings, removeBookmark, setSetting
 } from './storage.js';
+import { PLAYER_CSS, showPlayer } from './player.js';
 import { makeTypeable, toast } from './ui.js';
-import { isWebUrl, looksLikeUrl, parseHash, resolveInput } from './url.js';
+import { hopUrl, isWebUrl, looksLikeUrl, parseHash, resolveInput } from './url.js';
+import { isVideoUrl } from './video.js';
 
 var REMOVE_CONFIRM_MS = 3000;
 var REDIRECT_DELAY_MS = 700;
@@ -55,52 +57,97 @@ var HINTS = [
   [null, 'Back: go back']
 ];
 
+var currentView = null;
+
 // The start page. Websites reach it with requests in the URL fragment (see
-// hopUrl in url.js): handle those first, otherwise draw the launcher.
+// hopUrl in url.js): #go= and #add= are handled once on load; #play= is a
+// view, like the home screen, so Back from the player returns to wherever it
+// was opened from (a website, or home).
 export function startLauncher() {
   var params = parseHash(window.location.hash);
-  if (params.go !== undefined && openInput(params.go, true)) return;
+  var refused = false;
+  if (params.go !== undefined) {
+    var url = resolveInput(params.go, engineById(getSettings().engine));
+    if (url && !isVideoUrl(url)) {
+      addHistory(url, historyTitle(params.go));
+      window.location.replace(url);
+      return;
+    }
+    if (url) window.history.replaceState(null, '', playUrl(url, ''));
+    else refused = true;
+  }
   if (params.add !== undefined && isWebUrl(params.add)) {
     addBookmark(params.add, params.title);
-    showMessage('Bookmarked: ' + (params.title || hostOf(params.add)));
+    prepareBody();
+    document.body.appendChild(el('div', { 'class': 'ts-message', text: 'Bookmarked: ' + (params.title || hostOf(params.add)) }));
     setTimeout(function () { window.location.replace(params.add); }, REDIRECT_DELAY_MS);
     return;
   }
-  if (window.location.hash) window.history.replaceState(null, '', window.location.pathname + window.location.search);
-  render();
-  if (params.go !== undefined) toast("Can't open that address.");
+  prepareBody();
+  route();
+  window.addEventListener('hashchange', route);
+  if (refused) toast("Can't open that address.");
 }
 
-// Opens what was typed (address or search) and records it in history.
-// Returns false when it isn't something we'll open.
-function openInput(text, replace) {
-  var url = resolveInput(text, engineById(getSettings().engine));
-  if (!url) return false;
-  addHistory(url, looksLikeUrl(text.trim()) ? '' : 'Search: ' + text.trim());
-  if (replace) window.location.replace(url);
-  else window.location.href = url;
-  return true;
+function route() {
+  if (currentView) currentView.destroy();
+  var params = parseHash(window.location.hash);
+  if (params.play !== undefined && isWebUrl(params.play)) {
+    currentView = showPlayer(params, { exit: function () { window.history.back(); }, home: goHome });
+  } else {
+    if (window.location.hash) clearHash();
+    currentView = showHome();
+  }
 }
+
+function clearHash() {
+  window.history.replaceState(null, '', window.location.pathname + window.location.search);
+}
+
+function goHome() {
+  clearHash();
+  route();
+}
+
+function playUrl(url, title) {
+  return hopUrl(window.location.href, { play: url, title: title || '' });
+}
+
+function historyTitle(text) {
+  return looksLikeUrl(text.trim()) ? '' : 'Search: ' + text.trim();
+}
+
+// Opens a page, or a video in the player (a same-page fragment change, so it
+// adds a history entry and Back returns home).
+function openUrl(url, title) {
+  if (isVideoUrl(url)) {
+    window.location.href = playUrl(url, title);
+    return;
+  }
+  addHistory(url, title);
+  window.location.href = url;
+}
+
+var bodyPrepared = false;
 
 function prepareBody() {
+  if (bodyPrepared) return;
+  bodyPrepared = true;
   var boot = document.getElementById('ts-boot');
   if (boot) boot.parentNode.removeChild(boot);
   var style = el('style');
-  style.textContent = CSS;
+  style.textContent = CSS + '\n' + PLAYER_CSS;
   document.head.appendChild(style);
 }
 
-function showMessage(text) {
-  prepareBody();
-  document.body.appendChild(el('div', { 'class': 'ts-message', text: text }));
-}
-
-function render() {
-  prepareBody();
+function showHome() {
   var pendingRemove = { url: null, at: 0 };
 
   var search = makeTypeable(el('input', { type: 'text', spellcheck: 'false', autocomplete: 'off' }), function (text) {
-    if (text.trim() && !openInput(text, false)) toast("Can't open that address.");
+    if (!text.trim()) return;
+    var url = resolveInput(text, engineById(getSettings().engine));
+    if (url) openUrl(url, historyTitle(text));
+    else toast("Can't open that address.");
   });
   var engineButton = el('button', { type: 'button', 'class': 'ts-btn', onclick: cycleEngine });
   var tiles = el('div', { 'class': 'ts-tiles' });
@@ -127,11 +174,12 @@ function render() {
     el('div', { 'class': 'ts-section-head' }, [el('h2', { text: 'Recent' }), clearButton]),
     recent
   ]);
-  document.body.appendChild(root);
-  document.body.appendChild(el('div', { 'class': 'ts-hints' }, HINTS.map(function (hint) {
+  var hints = el('div', { 'class': 'ts-hints' }, HINTS.map(function (hint) {
     var parts = hint[0] ? [el('span', { 'class': 'ts-dot', style: 'background:' + hint[0] })] : [];
     return el('span', { 'class': 'ts-hint' }, parts.concat([hint[1]]));
-  })));
+  }));
+  document.body.appendChild(root);
+  document.body.appendChild(hints);
 
   showEngine();
   renderTiles();
@@ -164,7 +212,7 @@ function render() {
         href: item.url,
         'data-url': item.url,
         'data-title': title,
-        onclick: function () { addHistory(item.url, item.title); }
+        onclick: function (event) { openLink(event, item); }
       }, [
         el('span', { 'class': 'ts-tile-title', text: title }),
         el('span', { 'class': 'ts-tile-host', text: hostOf(item.url) })
@@ -180,9 +228,14 @@ function render() {
     list.slice(0, 10).forEach(function (item) {
       recent.appendChild(el('a', {
         href: item.url,
-        onclick: function () { addHistory(item.url, item.title); }
+        onclick: function (event) { openLink(event, item); }
       }, [item.title || hostOf(item.url), el('span', { text: item.url })]));
     });
+  }
+
+  function openLink(event, item) {
+    event.preventDefault();
+    openUrl(item.url, item.title);
   }
 
   // Yellow on a bookmark asks for confirmation, a second Yellow removes it.
@@ -224,4 +277,12 @@ function render() {
     if (key === KEY.BACK) { swallow(event); window.history.back(); return; }
     if (dir) { swallow(event); move(dir, { scope: root, scroll: true }); }
   }
+
+  return {
+    destroy: function () {
+      window.removeEventListener('keydown', onKey, true);
+      document.body.removeChild(root);
+      document.body.removeChild(hints);
+    }
+  };
 }

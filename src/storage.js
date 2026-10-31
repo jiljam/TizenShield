@@ -6,6 +6,7 @@ import { DEFAULT_BOOKMARKS } from './config.js';
 var PREFIX = 'tizenshield:';
 var MAX_BOOKMARKS = 48;
 var MAX_HISTORY = 30;
+var MAX_POSITIONS = 40;
 
 function read(key, fallback) {
   try {
@@ -55,6 +56,21 @@ export function addHistory(url, title) {
 
 export function clearHistory() {
   return write('history', []);
+}
+
+// Where each video was stopped, so it can resume. 0 forgets the video.
+export function getPosition(url) {
+  var list = read('positions', []);
+  for (var i = 0; i < list.length; i++) {
+    if (list[i].url === url) return list[i].time;
+  }
+  return 0;
+}
+
+export function savePosition(url, seconds) {
+  var list = withoutUrl(read('positions', []), url);
+  if (seconds > 0) list.unshift({ url: url, time: Math.floor(seconds) });
+  return write('positions', list.slice(0, MAX_POSITIONS));
 }
 
 export function getSettings() {

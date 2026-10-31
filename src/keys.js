@@ -12,13 +12,23 @@ export var KEY = {
   GREEN: 404,
   YELLOW: 405,
   BLUE: 406,
+  PLAY: 415,
+  PAUSE: 19,
+  PLAY_PAUSE: 10252,
+  STOP: 413,
+  FAST_FORWARD: 417,
+  REWIND: 412,
   IME_DONE: 65376,
   IME_CANCEL: 65385
 };
 
 // Desktop stand-ins so the module can be driven from a keyboard while
-// developing: Esc = Back, F1-F4 = Red, Green, Yellow, Blue.
-var DESKTOP = { 27: KEY.BACK, 112: KEY.RED, 113: KEY.GREEN, 114: KEY.YELLOW, 115: KEY.BLUE };
+// developing: Esc = Back, F1-F4 = Red, Green, Yellow, Blue, and the
+// keyboard's media keys.
+var DESKTOP = {
+  27: KEY.BACK, 112: KEY.RED, 113: KEY.GREEN, 114: KEY.YELLOW, 115: KEY.BLUE,
+  179: KEY.PLAY_PAUSE, 178: KEY.STOP
+};
 
 export var DIRECTION = {};
 DIRECTION[KEY.LEFT] = 'left';

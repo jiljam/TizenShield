@@ -15,15 +15,24 @@ import assert from 'node:assert/strict';
 const { chromium } = createRequire(import.meta.url)('playwright');
 const ROOT = new URL('..', import.meta.url).pathname;
 const OUT = join(ROOT, 'test/out');
-const TYPES = { '.html': 'text/html', '.js': 'text/javascript' };
+const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.webm': 'video/webm' };
 
 const server = createServer(async (req, res) => {
   const path = normalize(decodeURIComponent(req.url.split(/[?#]/)[0])).replace(/^(\.\.[/\\])+/, '');
   try {
     const body = await readFile(join(ROOT, path));
-    const headers = { 'Content-Type': TYPES[extname(path)] || 'application/octet-stream' };
+    const headers = { 'Content-Type': TYPES[extname(path)] || 'application/octet-stream', 'Accept-Ranges': 'bytes' };
     // Simulates sites whose security policy blocks injected <style> tags.
     if (req.url.includes('csp=1')) headers['Content-Security-Policy'] = "style-src 'none'";
+    // Range requests, like real video hosts: browsers can't seek without them.
+    const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range || '');
+    if (range) {
+      const start = range[1] ? Number(range[1]) : body.length - Number(range[2]);
+      const end = range[1] && range[2] ? Math.min(Number(range[2]), body.length - 1) : body.length - 1;
+      headers['Content-Range'] = `bytes ${start}-${end}/${body.length}`;
+      res.writeHead(206, headers).end(body.subarray(start, end + 1));
+      return;
+    }
     res.writeHead(200, headers).end(body);
   } catch {
     res.writeHead(404).end();
@@ -33,11 +42,16 @@ const port = server.address().port;
 
 const START = `http://localhost:${port}/test/out/start.html`;
 const SITE = `http://127.0.0.1:${port}/test/fixtures/site.html`;
+const VIDEOS = `http://127.0.0.1:${port}/test/fixtures/videos.html`;
+const CLIP = `http://127.0.0.1:${port}/test/out/clip.webm`;
 
 execFileSync('node', ['build.mjs', '--start-url', START, '--outdir', 'test/out'], { cwd: ROOT, stdio: 'inherit' });
 await mkdir(OUT, { recursive: true });
+// A 3-minute VP8 clip (desktop Chromium has no H.264): long enough to test seeking and resume.
+execFileSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc=duration=180:size=640x360:rate=24',
+  '-c:v', 'libvpx', '-b:v', '400k', '-deadline', 'realtime', '-cpu-used', '8', join(OUT, 'clip.webm')]);
 
-const browser = await chromium.launch();
+const browser = await chromium.launch({ args: ['--autoplay-policy=no-user-gesture-required'] });
 const context = await browser.newContext({ viewport: { width: 1920, height: 1080 } });
 await context.addInitScript({ path: join(OUT, 'userScript.js') });
 const page = await context.newPage();
@@ -150,6 +164,89 @@ try {
   await page.keyboard.press('F2');
   assert.equal(await page.locator('#tizenshield-toolbar').isVisible(), true);
   await page.screenshot({ path: join(OUT, 'toolbar-csp.png') });
+
+  const player = {
+    time: () => page.evaluate(() => document.querySelector('.ts-video').currentTime),
+    paused: () => page.evaluate(() => document.querySelector('.ts-video').paused),
+    hasClass: (name) => page.evaluate((n) => document.querySelector('.ts-player').classList.contains(n), name),
+    waitPlaying: (min) => page.waitForFunction((m) => {
+      const v = document.querySelector('.ts-video');
+      return v && !v.paused && v.currentTime > m;
+    }, min)
+  };
+
+  step('video page: toolbar offers "Play on TV player (2)" first, highlighted');
+  await page.goto(VIDEOS);
+  await page.waitForSelector('#tizenshield-toolbar', { state: 'attached' });
+  await page.keyboard.press('F2');
+  await page.keyboard.press('ArrowDown');
+  assert.equal(await active(), 'Play on TV player (2)');
+  await page.screenshot({ path: join(OUT, 'toolbar-video.png') });
+
+  step('it opens a chooser listing both videos, titled from the link text');
+  await page.keyboard.press('Enter');
+  await page.waitForSelector('#tizenshield-picker', { state: 'visible' });
+  const items = await page.locator('#tizenshield-picker button').allTextContents();
+  assert.deepEqual(items.map((t) => t.replace(/WEBM.*/, '')), ['Sample clip', 'Broken video']);
+  await page.screenshot({ path: join(OUT, 'picker.png') });
+
+  step('choosing one plays it full screen on the start page');
+  await page.keyboard.press('Enter');
+  await page.waitForURL(/start\.html#play=/);
+  await player.waitPlaying(0.5);
+  assert.equal(await page.textContent('.ts-p-title'), 'Sample clip');
+  await page.screenshot({ path: join(OUT, 'player.png') });
+
+  step('Right twice is batched into one +60 s seek; OK pauses');
+  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('ArrowRight');
+  await page.waitForFunction(() => document.querySelector('.ts-video').currentTime > 59);
+  await page.keyboard.press('Enter');
+  assert.equal(await player.paused(), true);
+  await page.screenshot({ path: join(OUT, 'player-paused.png') });
+
+  step('Back closes the player and returns to the page');
+  await page.keyboard.press('Escape');
+  await page.waitForURL(VIDEOS);
+
+  step('the Play key reopens it, resuming where it stopped');
+  await page.waitForSelector('#tizenshield-toolbar', { state: 'attached' });
+  await page.keyboard.press('MediaPlayPause');
+  await page.waitForSelector('#tizenshield-picker', { state: 'visible' });
+  await page.keyboard.press('Enter');
+  await page.waitForURL(/start\.html#play=/);
+  await player.waitPlaying(59);
+
+  step('Back while playing hides the controls first, then closes');
+  await page.keyboard.press('Escape');
+  assert.equal(await player.hasClass('ts-p-idle'), true);
+  await page.keyboard.press('Escape');
+  await page.waitForURL(VIDEOS);
+
+  step('OK on a broken video link shows a clear error with Try again / Back');
+  await page.waitForSelector('#tizenshield-toolbar', { state: 'attached' });
+  await page.evaluate(() => document.getElementById('missing').focus());
+  await page.keyboard.press('Enter');
+  await page.waitForSelector('.ts-p-failed');
+  assert.match(await page.textContent('.ts-p-error'), /can't play on the TV/);
+  assert.equal(await active(), 'Try again');
+  await page.screenshot({ path: join(OUT, 'player-error.png') });
+  await page.keyboard.press('Escape');
+  await page.waitForURL(VIDEOS);
+
+  step('a video address typed on the start page plays; Back returns home and frees the player');
+  await page.goto(START);
+  await page.waitForSelector('#ts-launcher');
+  await page.keyboard.press('Enter');
+  await page.keyboard.type(CLIP);
+  await page.keyboard.press('Enter');
+  await player.waitPlaying(1);
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('Escape');
+  await page.waitForSelector('#ts-launcher');
+  assert.equal(await page.locator('video').count(), 0);
+  // History is per address: replaying the clip by URL retitles its entry from the file name.
+  assert.equal((await page.locator('.ts-recent a').first().textContent()).indexOf('Video: clip'), 0);
 
   assert.deepEqual(errors, [], 'page errors');
   console.log('Smoke test passed. Screenshots in test/out/.');

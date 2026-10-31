@@ -1,7 +1,7 @@
 {
   "name": "tizenshield",
   "appName": "TizenShield",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "A remote-friendly web browser with ad hiding and a hardware video player for Samsung Tizen TVs, as a TizenBrew module.",
   "packageType": "mods",
   "websiteURL": "http://127.0.0.1:8081/module/gh%2Fjiljam%2FTizenShield/dist/start.html",

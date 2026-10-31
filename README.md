@@ -6,9 +6,10 @@ possible on Tizen): it gives the TV's built-in web engine a Brave-like start pag
 browsing and cosmetic ad hiding, on top of DNS-level ad blocking (NextDNS, AdGuard DNS or Pi-hole).
 Video files found on a page play in a full-screen player that uses the TV's hardware decoder.
 "TV fixes" add about 50 newer browser features the TV lacks, and when a site still can't run, a
-notice explains why instead of leaving a blank page.
+notice explains why instead of leaving a blank page. A **Page log** shows what happened on the
+current page, right on the TV.
 
-Status: v0.3, built and tested in desktop Chromium (`npm test`, `npm run smoke`).
+Status: v0.4, built and tested in desktop Chromium (`npm test`, `npm run smoke`).
 Not yet tried on a TV; see [First test on the TV](#first-test-on-the-tv).
 
 | Decision | Choice |
@@ -60,7 +61,7 @@ two kinds of failure, and only the first can be fixed from a script:
   check `event.key === 'Enter'` respond to the remote, including Samsung's Back, colour and media
   keys), `URLSearchParams`, `AbortController`, `Object.entries`, `Array.flat`, `String.padStart`,
   `Promise.finally`, `globalThis`, `Element.append`, scroll options and more. Each is added only
-  if missing. **Info** in the toolbar shows how many were added; **TV fixes: off** turns them off
+  if missing. **Log** in the toolbar shows how many were added; **TV fixes: off** turns them off
   for a site, in case one ever gets in a site's way.
 - **Newer JavaScript syntax** (`?.`, `async`, module scripts) can't be added after the fact: the
   engine can't read the site's code at all. Many recent sites are like this.
@@ -73,6 +74,23 @@ blocking). It offers **Go back** or **Stay on this page**.
 TizenBrew injects the script as each page starts, so the fixes and error recording usually come
 before the site's own scripts, but this isn't guaranteed. Errors that happen first are missed;
 the notice then appears later (10 seconds after loading) with softer wording.
+
+### Page log
+
+Press Green, then **Log** (or **Show log** on the compatibility notice). It answers "why is this
+page stuck?" without a PC, and updates every 2 seconds while open:
+
+- **Still waiting for a response:** the site's own data requests that haven't been answered, and
+  for how long. A page that never finishes loading is usually waiting on one of these.
+- **Timeline:** when the site first responded, when the content was ready and fully loaded, every
+  script error (marked "code too new" or "missing feature: X" where it can tell), downloads that
+  failed (the site's own files, or other sites' files, which are often ads blocked by DNS),
+  requests that failed or took over 5 seconds, console errors, "still loading after 30 s", and
+  TizenShield's own events.
+- **Slowest downloads**, with their times.
+
+The browser only reports a download once it finishes, so stuck scripts and images don't appear
+until they fail; stuck data requests do. Only the top page is logged, not embedded frames.
 
 ```
  TizenBrew ──opens──▶ start.html ◀──#go= / #add=──┐
@@ -88,7 +106,8 @@ the notice then appears later (10 seconds after loading) with softer wording.
 | `src/player.js` | Full-screen hardware player: controls, batched seeking, resume, audio tracks, errors |
 | `src/detect.js`, `src/picker.js`, `src/video.js` | Finding videos on a page, the "which video?" chooser, URL/format helpers |
 | `src/polyfills/` | TV fixes: missing built-ins, page APIs, URL/abort helpers, observers |
-| `src/compat.js`, `src/modal.js` | Script-error recording, the "can't run on your TV's browser" notice, shared dialog |
+| `src/pagelog.js`, `src/logpanel.js` | Recording page events (errors, failed downloads, requests) and the Page log screen |
+| `src/compat.js`, `src/modal.js` | The "can't run on your TV's browser" notice, shared dialog |
 | `src/site.js`, `src/toolbar.js` | On websites: remote keys, Green toolbar, Back, Home, Bookmark |
 | `src/spatialnav.js` | Arrow keys move between links; scrolls when nothing is in reach |
 | `src/adhide.js`, `src/filters.js` | Cosmetic filters; script fallback for sites whose CSP blocks `<style>` |
@@ -176,17 +195,19 @@ Desktop tests can't answer these; please note what happens:
    search box and press Enter to switch to DuckDuckGo Lite.
 4. **Browsing:** on a normal site, do arrows move a visible orange ring between links, and does
    Back work?
-5. **Toolbar → Info:** shows the engine version and whether "local link" is OK or blocked. If
-   OK, a later version can store bookmarks in a TizenBrew service instead of the start page,
-   which removes the extra page load when bookmarking.
+5. **Toolbar → Log:** shows the engine version, and an entry "Local link to TizenBrew: OK or
+   blocked". If OK, a later version can store bookmarks in a TizenBrew service instead of the
+   start page, which removes the extra page load when bookmarking.
 6. **Speed:** is moving between links on a heavy site noticeably slow?
 7. **Video:** open a page that links to an MP4 or MKV file (for example a public-domain film on
    archive.org: open a film's page, then its download options): does **Play on TV player**
    appear and play, do Play/Pause and Fast-forward on the remote work, and does seeking work?
    If a video has two audio languages, does Yellow switch them?
-8. **TV fixes:** on a site that used to be blank or broken, press Green → **Info**: how many
+8. **TV fixes:** on a site that used to be blank or broken, press Green → **Log**: how many
    fixes were added? Does a site now work, or does the "can't run on your TV's browser" notice
    appear, and with which reason?
+9. **Page log:** on a site that keeps loading, open **Log**: is anything listed under "Still
+   waiting for a response", and which errors or failed downloads appear?
 
 ## Known limitations
 

@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Troubled page</title>
+  <style>body { margin: 40px; font: 26px sans-serif; }</style>
+</head>
+<body>
+  <h1>A page with problems</h1>
+  <p>This page has enough text that it doesn't look empty, so the compatibility notice stays away.
+    It loads a script of its own that doesn't exist, an image from another site that fails, makes a
+    request that never gets an answer, a request that fails, and logs errors to the console.</p>
+  <script src="missing-app.js"></script>
+  <script>
+    var img = document.createElement('img');
+    document.body.appendChild(img);
+    img.src = 'http://localhost:' + location.port + '/no-such-ad.png';
+
+    console.error('Player failed to start', { code: 42 });
+    var xhr = new XMLHttpRequest();
+    xhr.open('GET', '/api/slow');
+    xhr.send();
+    fetch('/api/missing');
+    setTimeout(function () { throw new Error('kaboom'); }, 0);
+    for (var i = 1; i <= 25; i++) console.error('Repeated error ' + i);
+  </script>
+</body>
+</html>

@@ -1,10 +1,11 @@
-import { el, hostOf, toArray } from './dom.js';
+import { el, toArray } from './dom.js';
 import { MODAL, createModal, modalButton } from './modal.js';
+import { logEvent, pageStats } from './pagelog.js';
 
-// Explains blank pages. Script errors are recorded from the moment
-// TizenBrew injects us; a few seconds after the page loads, if it still
-// looks empty, the most likely cause is shown instead of a silent blank
-// screen. Errors thrown before injection are missed, hence the softer
+// Explains blank pages. Script errors are recorded by the page log from the
+// moment TizenBrew injects us; a few seconds after the page loads, if it
+// still looks empty, the most likely cause is shown instead of a silent
+// blank screen. Errors thrown before injection are missed, hence the softer
 // "still looks empty" fallback later on.
 
 var STRONG_DELAY_MS = 2500;
@@ -12,37 +13,7 @@ var WEAK_DELAY_MS = 10000;
 var NO_LOAD_TIMEOUT_MS = 20000;
 var EMPTY_TEXT_MAX = 200;
 
-var SYNTAX = /SyntaxError|Unexpected (token|identifier|string|number|reserved word|strict mode)|missing \) after|Invalid regular expression|Block-scoped declarations/i;
-var MISSING = /(?:ReferenceError|TypeError):\s*(?:Can't find variable:\s*)?([\w$.]+) is not (?:defined|a function|a constructor)/;
 var TOO_NEW = "This site can't run on your TV's browser";
-
-var report = { errors: 0, syntax: 0, missing: [], blocked: [] };
-
-function siteOf(host) {
-  return host.split('.').slice(-2).join('.');
-}
-
-export function classifyError(message) {
-  var missing = MISSING.exec(message);
-  return { syntax: SYNTAX.test(message), missing: missing ? missing[1] : null };
-}
-
-export function watchErrors() {
-  window.addEventListener('error', function (event) {
-    var target = event.target;
-    if (target && target !== window) {
-      // A resource failed. Only the site's own scripts matter: ad and
-      // tracker scripts blocked by DNS are expected.
-      var src = target.tagName === 'SCRIPT' ? target.src : '';
-      if (src && siteOf(hostOf(src)) === siteOf(window.location.hostname)) report.blocked.push(hostOf(src));
-      return;
-    }
-    report.errors++;
-    var kind = classifyError(String(event.message || ''));
-    if (kind.syntax) report.syntax++;
-    if (kind.missing && report.missing.indexOf(kind.missing) < 0) report.missing.push(kind.missing);
-  }, true);
-}
 
 // Chrome 47 ignores <script type="module">: a page with no fallback
 // (nomodule) script never starts.
@@ -51,11 +22,12 @@ function moduleOnly() {
 }
 
 export function compatReport() {
+  var stats = pageStats();
   return {
-    errors: report.errors,
-    syntax: report.syntax,
-    missing: report.missing.slice(),
-    blocked: report.blocked.slice(),
+    errors: stats.errors,
+    syntax: stats.syntax,
+    missing: stats.missing,
+    blocked: stats.blockedOwn,
     moduleOnly: moduleOnly()
   };
 }
@@ -103,6 +75,7 @@ export function checkWhenLoaded(show) {
     var result = diagnose(allowWeak);
     if (!result) return;
     done = true;
+    logEvent('error', 'Compatibility notice: ' + result.title, result.reason);
     show(result);
   }
   function afterLoad() {
@@ -142,12 +115,13 @@ export function createCompatPanel(actions) {
         (fixCount ? 'TizenShield added ' + fixCount + ' missing features to this page, but ' : 'Missing features can be added to a page, but ') +
         'newer JavaScript itself can\'t be.';
     var goBack = modalButton('Go back', function () { modal.close(); actions.back(); });
+    var showLog = modalButton('Show log', function () { modal.close(); actions.showLog(); });
     card.appendChild(el('div', { style: MODAL.heading, text: result.title }));
     card.appendChild(el('div', { style: MODAL.text, text: result.reason }));
     card.appendChild(el('div', { style: MODAL.muted, text: explain }));
     var info = details(compatReport());
     if (info) card.appendChild(el('div', { style: MODAL.muted, text: info }));
-    card.appendChild(el('div', { style: MODAL.row }, [goBack, modalButton('Stay on this page', modal.close)]));
+    card.appendChild(el('div', { style: MODAL.row }, [goBack, showLog, modalButton('Stay on this page', modal.close)]));
     modal.open(goBack);
   }
 

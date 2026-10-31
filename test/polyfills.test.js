@@ -8,7 +8,7 @@ import { define } from '../src/polyfills/define.js';
 import { SearchParams, Controller, Signal } from '../src/polyfills/net.js';
 import { intersect, parseMargin, thresholdIndex } from '../src/polyfills/observers.js';
 import { keyName } from '../src/polyfills/dom.js';
-import { classifyError } from '../src/compat.js';
+import { classifyError, formatSeconds, shortUrl, siteOf } from '../src/pagelog.js';
 
 // Each polyfill is checked against Node's native implementation.
 
@@ -181,4 +181,20 @@ test('script errors are sorted into "too new to parse" and "missing feature"', f
   assert.deepEqual(classifyError('Uncaught ReferenceError: Proxy is not defined'), { syntax: false, missing: 'Proxy' });
   assert.deepEqual(classifyError('Uncaught TypeError: Object.entries is not a function'), { syntax: false, missing: 'Object.entries' });
   assert.deepEqual(classifyError('Script error.'), { syntax: false, missing: null });
+});
+
+test('page log formats times and shortens addresses for TV-width rows', function () {
+  assert.equal(formatSeconds(0), '+0.0 s');
+  assert.equal(formatSeconds(12345), '+12.3 s');
+  assert.equal(formatSeconds(-5), '+0.0 s');
+  assert.equal(shortUrl('https://cdn.example.com/app/main.js?v=3#x'), 'cdn.example.com/app/main.js');
+  assert.equal(shortUrl('https://a.b/' + 'x'.repeat(200), 30), 'a.b/' + 'x'.repeat(23) + '...');
+  assert.equal(shortUrl(undefined), '');
+});
+
+test('page log tells a site\'s own files from other sites\'', function () {
+  assert.equal(siteOf('cdn.example.com:8443'), 'example.com');
+  assert.equal(siteOf('www.example.com'), 'example.com');
+  assert.equal(siteOf('127.0.0.1:37699'), '127.0.0.1');
+  assert.notEqual(siteOf('10.0.0.1'), siteOf('192.168.0.1'));
 });

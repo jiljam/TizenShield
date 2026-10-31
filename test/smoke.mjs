@@ -18,6 +18,12 @@ const OUT = join(ROOT, 'test/out');
 const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.webm': 'video/webm' };
 
 const server = createServer(async (req, res) => {
+  // A request that never gets an answer during the test, like a stuck API.
+  if (req.url.startsWith('/api/slow')) {
+    const timer = setTimeout(() => res.writeHead(200).end('late'), 120000);
+    res.on('close', () => clearTimeout(timer));
+    return;
+  }
   const path = normalize(decodeURIComponent(req.url.split(/[?#]/)[0])).replace(/^(\.\.[/\\])+/, '');
   try {
     const body = await readFile(join(ROOT, path));
@@ -322,14 +328,69 @@ try {
   assert.match(await compatPanel().textContent(), /Details: 1 script error/);
   assert.equal(await old.evaluate(() => document.activeElement.textContent), 'Go back');
 
+  step('the notice\'s "Show log" opens the page log with the verdict in it');
+  await old.keyboard.press('ArrowRight');
+  assert.equal(await old.evaluate(() => document.activeElement.textContent), 'Show log');
+  await old.keyboard.press('Enter');
+  await old.locator('#tizenshield-log').waitFor({ state: 'visible' });
+  assert.match(await old.locator('#tizenshield-log').textContent(), /Compatibility notice: This site can't run/);
+  await old.keyboard.press('Escape');
+  assert.equal(await old.locator('#tizenshield-log').isVisible(), false);
+
   step('missing feature: names it; Back on the notice goes back a page');
   await expectNotice('compat-missing', /features your TV doesn't have \(TotallyNewBrowserFeature\)/);
   await old.keyboard.press('Escape');
   await old.waitForURL(fixture('compat-syntax'));
   assert.equal(oldErrors.length, 3, 'only the deliberately broken pages report errors: ' + oldErrors.join(' | '));
   await oldEngine.close();
+
+  const logContext = await browser.newContext({ viewport: { width: 1920, height: 1080 } });
+  await logContext.addInitScript({ path: join(OUT, 'userScript.js') });
+  const lp = await logContext.newPage();
+  const logPanel = lp.locator('#tizenshield-log');
+  const logText = () => logPanel.textContent();
+
+  step('page log: opens from the toolbar\'s Log button with the remote');
+  await lp.goto(`http://127.0.0.1:${port}/test/fixtures/troubled.html`);
+  await lp.waitForSelector('#tizenshield-toolbar', { state: 'attached' });
+  await lp.waitForTimeout(500);
+  await lp.keyboard.press('F2');
+  await lp.keyboard.press('ArrowDown');
+  for (let i = 0; i < 8; i++) await lp.keyboard.press('ArrowRight');
+  assert.equal(await lp.evaluate(() => document.activeElement.textContent), 'Log');
+  await lp.keyboard.press('Enter');
+  await logPanel.waitFor({ state: 'visible' });
+
+  step('page log: lists the stuck request, failed downloads and requests, and errors');
+  const text = await logText();
+  [
+    /STILL WAITING FOR A RESPONSE.*Request GET.*\/api\/slow/,
+    /Script didn't load.*missing-app\.js.*the site's own/,
+    /Image didn't load.*no-such-ad\.png.*another site/,
+    /Fetch GET failed \(404\).*\/api\/missing/,
+    /Console error.*Player failed to start \{"code":42\}/,
+    /Script error: Error: kaboom/,
+    /TizenShield started/,
+    /Page content ready/,
+    /SLOWEST DOWNLOADS/
+  ].forEach((pattern) => assert.match(text, pattern));
+  assert.match(text, /27 errors.*3 failed.*1 request waiting/);
+  await lp.screenshot({ path: join(OUT, 'page-log.png') });
+
+  step('page log: refreshes itself, Down scrolls it, Back closes it');
+  const waited = () => lp.evaluate(() => document.querySelector('#tizenshield-log').textContent.match(/for (\d+\.\d) s/)[1]);
+  const firstWait = await waited();
+  await lp.waitForTimeout(2300);
+  assert.notEqual(await waited(), firstWait);
+  const scrollTop = () => lp.evaluate(() => document.querySelector('#tizenshield-log').firstChild.children[1].scrollTop);
+  await lp.keyboard.press('ArrowDown');
+  assert.ok(await scrollTop() > 0);
+  await lp.keyboard.press('Escape');
+  assert.equal(await logPanel.isVisible(), false);
+  await logContext.close();
   console.log('Smoke test passed. Screenshots in test/out/.');
 } finally {
   await browser.close();
+  server.closeAllConnections();
   server.close();
 }

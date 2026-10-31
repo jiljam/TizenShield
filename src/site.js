@@ -1,8 +1,10 @@
 import { START_URL, VERSION } from './config.js';
 import { startAdHiding } from './adhide.js';
-import { checkWhenLoaded, compatReport, createCompatPanel, engineVersion } from './compat.js';
+import { checkWhenLoaded, createCompatPanel, engineVersion } from './compat.js';
 import { findVideos, videoLinkFor } from './detect.js';
 import { DIRECTION, KEY, isEditing, keyOf, swallow } from './keys.js';
+import { createLogPanel } from './logpanel.js';
+import { logEvent } from './pagelog.js';
 import { createPicker } from './picker.js';
 import { move } from './spatialnav.js';
 import { adHidingOff, polyfillsOff, setAdHidingOff, setPolyfillsOff } from './storage.js';
@@ -23,7 +25,11 @@ export function startSite() {
   if (!adOff) startAdHiding(window.location.hostname);
 
   var picker = createPicker(playVideo);
-  var compatPanel = createCompatPanel({ back: goBack });
+  var compatPanel = createCompatPanel({ back: goBack, showLog: openLog });
+  var logPanel = createLogPanel(function () {
+    return { version: VERSION, engine: engineVersion(), fixes: fixesOff ? 'off' : fixes.length + ' added' };
+  });
+  var probedLocalLink = false;
   var toolbar = createToolbar({
     open: function (text) {
       // The start page knows the chosen search engine and keeps history.
@@ -45,11 +51,11 @@ export function startSite() {
       { label: function () { return adOff ? 'Ad hiding: off' : 'Ad hiding: on'; }, run: toggleAdHiding },
       { label: function () { return passThrough ? 'Remote: to site' : 'Remote: browse'; }, run: togglePassThrough },
       { label: function () { return fixesOff ? 'TV fixes: off' : 'TV fixes: on'; }, run: toggleFixes },
-      { label: 'Info', run: diagnostics }
+      { label: 'Log', run: openLog }
     ]
   });
   document.documentElement.appendChild(toolbar.root);
-  var ourUi = [toolbar.root, picker.root, compatPanel.root];
+  var ourUi = [toolbar.root, picker.root, compatPanel.root, logPanel.root];
   installFocusRing({ contains: function (node) { return ourUi.some(function (root) { return root.contains(node); }); } });
   window.addEventListener('keydown', onKey, true);
   checkWhenLoaded(function (result) {
@@ -65,11 +71,20 @@ export function startSite() {
     playVideo(video);
   }, true);
   setTimeout(function () {
-    if (findVideos().length) toast('Video found. Press Play on the remote to watch it on the TV player.', 5000);
+    var count = findVideos().length;
+    if (!count) return;
+    logEvent('info', 'Video files found: ' + count, 'Play on TV player can open them');
+    toast('Video found. Press Play on the remote to watch it on the TV player.', 5000);
   }, VIDEO_HINT_DELAY_MS);
 
   function onKey(event) {
     var key = keyOf(event);
+    if (logPanel.isOpen()) {
+      if (key === KEY.BACK || key === KEY.GREEN) { swallow(event); logPanel.close(); return; }
+      if (key === KEY.UP || key === KEY.DOWN) { swallow(event); logPanel.scroll(key === KEY.DOWN ? 1 : -1); return; }
+      if (key === KEY.LEFT || key === KEY.RIGHT) swallow(event);
+      if (key !== KEY.RED) return; // OK presses Close; Red still goes home
+    }
     if (key === KEY.GREEN) { swallow(event); picker.close(); compatPanel.close(); toolbar.toggle(); return; }
     if (key === KEY.RED) { swallow(event); goHome(); return; }
     if (key === KEY.YELLOW) { swallow(event); bookmark(); return; }
@@ -166,22 +181,24 @@ export function startSite() {
       : 'Arrow keys move between links again.');
   }
 
-  // Reports the engine version, TV fixes added, script errors, and whether
-  // this page may reach TizenBrew's local server (decides whether a future
-  // version can sync bookmarks through a TizenBrew service instead of the
-  // start page).
-  function diagnostics() {
-    var summary = 'TizenShield ' + VERSION + ' | Chrome ' + engineVersion() +
-      ' | fixes: ' + (fixesOff ? 'off' : fixes.length) + ' | script errors: ' + compatReport().errors;
-    if (typeof window.fetch !== 'function') {
-      toast(summary + ' | no fetch()', 8000);
-      return;
-    }
-    toast(summary + ' | testing local link...', 8000);
+  function openLog() {
+    toolbar.close();
+    picker.close();
+    compatPanel.close();
+    logPanel.open();
+    probeLocalLink();
+  }
+
+  // Whether this page may reach TizenBrew's local server: decides whether a
+  // future version can keep bookmarks in a TizenBrew service instead of the
+  // start page. Checked once, when the log is first opened.
+  function probeLocalLink() {
+    if (probedLocalLink || typeof window.fetch !== 'function') return;
+    probedLocalLink = true;
     window.fetch(LOCAL_PROBE_URL, { mode: 'no-cors' }).then(function () {
-      toast(summary + ' | local link: OK', 8000);
+      logEvent('info', 'Local link to TizenBrew: OK');
     }, function () {
-      toast(summary + ' | local link: blocked', 8000);
+      logEvent('info', 'Local link to TizenBrew: blocked');
     });
   }
 }

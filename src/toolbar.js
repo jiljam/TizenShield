@@ -6,7 +6,8 @@ var BAR = STYLE.reset + 'position:fixed;left:0;right:0;top:0;z-index:' + Z_TOP +
   'padding:24px 40px 10px;background:rgba(18,19,24,0.97);border-bottom:4px solid ' + ACCENT + ';';
 var ROW = STYLE.reset + 'display:block;margin-top:18px;';
 var HINT = STYLE.reset + 'display:block;margin:4px 0 8px;font-size:22px;color:#a9abb8;';
-var BUTTON = STYLE.button + 'margin-bottom:14px;';
+// Slightly tighter than STYLE.button so all ten buttons fit on one row.
+var BUTTON = STYLE.button + 'margin:0 12px 14px 0;padding:14px 21px;';
 var PRIMARY = BUTTON + 'background:' + ACCENT + ';border-color:' + ACCENT + ';color:#fff;font-weight:bold;';
 var PRIMARY_FOCUS = 'border-color:#fff;';
 

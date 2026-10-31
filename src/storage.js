@@ -83,20 +83,36 @@ export function setSetting(name, value) {
   return write('settings', settings);
 }
 
-// Per-site switch, stored in that site's own localStorage.
-export function adHidingOff() {
+// Per-site switches, stored in that site's own localStorage.
+function siteFlag(name) {
   try {
-    return window.localStorage.getItem(PREFIX + 'adhide-off') === '1';
+    return window.localStorage.getItem(PREFIX + name) === '1';
   } catch (e) {
     return false;
   }
 }
 
-export function setAdHidingOff(off) {
+function setSiteFlag(name, on) {
   try {
-    if (off) window.localStorage.setItem(PREFIX + 'adhide-off', '1');
-    else window.localStorage.removeItem(PREFIX + 'adhide-off');
+    if (on) window.localStorage.setItem(PREFIX + name, '1');
+    else window.localStorage.removeItem(PREFIX + name);
   } catch (e) {
     // Storage blocked on this site: the switch just won't stick.
   }
+}
+
+export function adHidingOff() {
+  return siteFlag('adhide-off');
+}
+
+export function setAdHidingOff(off) {
+  setSiteFlag('adhide-off', off);
+}
+
+export function polyfillsOff() {
+  return siteFlag('polyfills-off');
+}
+
+export function setPolyfillsOff(off) {
+  setSiteFlag('polyfills-off', off);
 }

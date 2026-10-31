@@ -1,7 +1,10 @@
 import { startAdHiding } from './adhide.js';
+import { watchErrors } from './compat.js';
 import { onReady } from './dom.js';
 import { startLauncher } from './launcher.js';
+import { installPolyfills } from './polyfills/index.js';
 import { startSite } from './site.js';
+import { polyfillsOff } from './storage.js';
 
 // TizenBrew evaluates this script in every new page and frame. The start page
 // also loads it with a <script> tag, so guard against running twice.
@@ -14,6 +17,15 @@ var TIZENBREW_SERVER = '127.0.0.1:8081';
   var loc = window.location;
   // Leaves TizenBrew's own screens (file:// and friends) alone.
   if (loc.protocol !== 'http:' && loc.protocol !== 'https:') return;
+
+  // Right away, not on DOM ready: TizenBrew injects us as each page starts,
+  // so polyfills usually land before the site's scripts run, and errors
+  // are recorded from the start. Not on TizenBrew's own server (our start
+  // page and other modules), whose code doesn't need either.
+  if (loc.host !== TIZENBREW_SERVER) {
+    window.__tizenShieldFixes = polyfillsOff() ? [] : installPolyfills(window);
+    if (window.top === window) watchErrors();
+  }
 
   onReady(function () {
     var isStartPage = document.documentElement.getAttribute('data-tizenshield') === 'start';

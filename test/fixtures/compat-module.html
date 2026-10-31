@@ -1,0 +1,9 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Module-only app</title></head>
+<body style="margin:0;background:#151515">
+  <div id="app"></div>
+  <!-- Chrome 47 skips module scripts, so an app like this never starts on a 2017 TV. -->
+  <script type="module">document.getElementById('app').setAttribute('data-started', 'yes');</script>
+</body>
+</html>

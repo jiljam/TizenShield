@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Modern APIs</title>
+  <style>
+    body { margin: 40px; font: 26px sans-serif; background: #fff; }
+    #spacer { height: 3000px; }
+    #box { width: 100px; height: 20px; background: #ddd; }
+  </style>
+</head>
+<body>
+  <h1>A site written for newer browsers</h1>
+  <p>The smoke test removes these features before TizenShield loads, as on a 2017 TV, and checks they work again.</p>
+  <ul id="results"></ul>
+  <div id="box"></div>
+  <div id="spacer"></div>
+  <div id="lazy" data-state="waiting">Lazy-loaded section</div>
+  <script>
+    var results = {};
+    function check(name, fn) {
+      var ok;
+      try { ok = fn() === true; } catch (e) { ok = 'error: ' + e.message; }
+      results[name] = ok;
+      var li = document.createElement('li');
+      li.textContent = (ok === true ? 'OK  ' : 'FAIL  ') + name;
+      document.getElementById('results').appendChild(li);
+    }
+    check('Object.entries', function () { return JSON.stringify(Object.entries({ a: 1 })) === '[["a",1]]'; });
+    check('Array.flat', function () { return [1, [2, [3]]].flat().length === 3; });
+    check('String.padStart', function () { return '5'.padStart(3, '0') === '005'; });
+    check('Promise.finally', function () { return typeof Promise.resolve().finally === 'function'; });
+    check('globalThis', function () { return globalThis === window; });
+    check('URLSearchParams', function () { return new URLSearchParams('a=1&b=2').get('b') === '2'; });
+    check('URL.searchParams', function () {
+      var url = new URL('https://example.com/?a=1');
+      url.searchParams.set('a', '2');
+      return url.search === '?a=2';
+    });
+    check('NodeList.forEach', function () {
+      var n = 0;
+      document.querySelectorAll('li').forEach(function () { n++; });
+      return n > 0;
+    });
+    check('Element.append', function () {
+      var div = document.createElement('div');
+      div.append('text', document.createElement('b'));
+      return div.childNodes.length === 2;
+    });
+    check('AbortController', function () {
+      var controller = new AbortController();
+      controller.abort();
+      return controller.signal.aborted;
+    });
+    window.results = results;
+
+    // Lazy loading, the way modern sites load posters and thumbnails.
+    var lazy = document.getElementById('lazy');
+    new IntersectionObserver(function (entries) {
+      entries.forEach(function (entry) { if (entry.isIntersecting) lazy.setAttribute('data-state', 'loaded'); });
+    }).observe(lazy);
+
+    var box = document.getElementById('box');
+    new ResizeObserver(function (entries) {
+      document.body.setAttribute('data-box-width', String(Math.round(entries[0].contentRect.width)));
+    }).observe(box);
+    setTimeout(function () { box.style.width = '250px'; }, 300);
+
+    document.addEventListener('keydown', function (event) {
+      if (event.key === 'Enter') document.body.setAttribute('data-key', 'Enter');
+    });
+  </script>
+</body>
+</html>

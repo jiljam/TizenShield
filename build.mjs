@@ -1,18 +1,22 @@
 // Builds dist/userScript.js (injected by TizenBrew into every page) and
 // dist/start.html. Output must run on 2017 Samsung TVs (Tizen 3.0, Chrome
-// 47), so the bundle is converted to ES5 and then checked with an ES5-only
-// parser.
+// 47), so the bundle is converted to ES5, minified (it's injected into every
+// page and frame, and parsed by a slow TV CPU), and then checked with an
+// ES5-only parser.
 //
 //   node build.mjs                                  # production build into dist/
 //   node build.mjs --start-url <url> --outdir <dir> # local test build
+//   node build.mjs --no-minify                      # readable output for debugging
 import { readFile, readdir, writeFile, mkdir, copyFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { parseArgs } from 'node:util';
-import { build } from 'esbuild';
+import { build, transform } from 'esbuild';
 import { transformAsync } from '@babel/core';
 import { parse } from 'acorn';
 
 // Browser APIs that Chrome 47 lacks. Babel converts syntax, not these.
+// src/polyfills/ is exempt: it names these APIs in order to add them to
+// websites, and must still only use what Chrome 47 has itself.
 const UNSUPPORTED_APIS = [
   [/Object\.(entries|values|fromEntries)\b/, 'Object.entries/values (Chrome 54)'],
   [/\bURLSearchParams\b/, 'URLSearchParams (Chrome 49)'],
@@ -25,14 +29,14 @@ const UNSUPPORTED_APIS = [
   [/function\s*\*/, 'generators (needs regenerator runtime)'],
   [/\.focus\(\{/, 'focus options (Chrome 64)'],
   [/scroll(IntoView|To|By)\(\{/, 'scroll options (Chrome 61)'],
-  [/requestIdleCallback/, 'requestIdleCallback (Chrome 47 lacks it)'],
   [/\.forEach\b.*querySelectorAll|querySelectorAll\([^)]*\)\.forEach/, 'NodeList.forEach (Chrome 51); wrap in toArray()']
 ];
 
 const { values: args } = parseArgs({
   options: {
     'start-url': { type: 'string' },
-    outdir: { type: 'string', default: 'dist' }
+    outdir: { type: 'string', default: 'dist' },
+    'no-minify': { type: 'boolean', default: false }
   }
 });
 
@@ -41,7 +45,9 @@ const startUrl = args['start-url'] || pkg.websiteURL;
 
 async function lint() {
   const problems = [];
-  for (const name of await readdir('src')) {
+  for (const entry of await readdir('src', { withFileTypes: true })) {
+    if (!entry.isFile()) continue;
+    const name = entry.name;
     const lines = (await readFile(join('src', name), 'utf8')).split('\n');
     lines.forEach((line, i) => {
       if (/^\s*\/\//.test(line)) return;
@@ -75,7 +81,10 @@ const { code } = await transformAsync(bundle.outputFiles[0].text, {
   presets: [['@babel/preset-env', { targets: 'chrome 47', forceAllTransforms: true, modules: false }]]
 });
 
-const output = `/* TizenShield ${pkg.version} */\n${code}\n`;
+const minified = args['no-minify']
+  ? code
+  : (await transform(code, { minify: true, target: 'es5', legalComments: 'none' })).code;
+const output = `/* TizenShield ${pkg.version} */\n${minified}\n`;
 try {
   parse(output, { ecmaVersion: 5 });
 } catch (error) {
@@ -85,4 +94,5 @@ try {
 await mkdir(args.outdir, { recursive: true });
 await writeFile(join(args.outdir, 'userScript.js'), output);
 await copyFile('static/start.html', join(args.outdir, 'start.html'));
-console.log(`Built ${args.outdir}/userScript.js (${(output.length / 1024).toFixed(1)} KiB, ES5) with start page ${startUrl}`);
+const kind = args['no-minify'] ? 'ES5' : 'ES5, minified';
+console.log(`Built ${args.outdir}/userScript.js (${(output.length / 1024).toFixed(1)} KiB, ${kind}) with start page ${startUrl}`);

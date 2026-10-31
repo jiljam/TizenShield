@@ -249,6 +249,85 @@ try {
   assert.equal((await page.locator('.ts-recent a').first().textContent()).indexOf('Video: clip'), 0);
 
   assert.deepEqual(errors, [], 'page errors');
+
+  // A second browser that behaves like the 2017 TV engine for these
+  // features: they're removed before TizenShield loads, so its polyfills
+  // must bring them back.
+  const oldEngine = await browser.newContext({ viewport: { width: 1920, height: 1080 } });
+  await oldEngine.addInitScript(() => {
+    [
+      [Object, 'entries'], [Object, 'values'], [Object, 'fromEntries'], [Array.prototype, 'flat'],
+      [Array.prototype, 'flatMap'], [String.prototype, 'padStart'], [String.prototype, 'padEnd'],
+      [Promise.prototype, 'finally'], [window, 'URLSearchParams'], [URL.prototype, 'searchParams'],
+      [NodeList.prototype, 'forEach'], [Element.prototype, 'append'], [Element.prototype, 'prepend'],
+      [Document.prototype, 'append'], [DocumentFragment.prototype, 'append'], [window, 'AbortController'],
+      [window, 'AbortSignal'], [window, 'IntersectionObserver'], [window, 'IntersectionObserverEntry'],
+      [window, 'ResizeObserver'], [KeyboardEvent.prototype, 'key']
+      // globalThis stays: Playwright itself needs it to run page.evaluate().
+    ].forEach(([owner, name]) => { delete owner[name]; });
+  });
+  await oldEngine.addInitScript({ path: join(OUT, 'userScript.js') });
+  const old = await oldEngine.newPage();
+  const oldErrors = [];
+  old.on('pageerror', (error) => oldErrors.push(error.message));
+  const MODERN = `http://127.0.0.1:${port}/test/fixtures/modern-apis.html`;
+  const fixture = (name) => `http://127.0.0.1:${port}/test/fixtures/${name}.html`;
+  const compatPanel = () => old.locator('#tizenshield-compat');
+
+  step('old engine: a site needing 10 newer features works with TV fixes on');
+  await old.goto(MODERN);
+  const results = await old.evaluate(() => window.results);
+  assert.deepEqual(Object.values(results).filter((r) => r !== true), [], JSON.stringify(results));
+  const fixes = await old.evaluate(() => window.__tizenShieldFixes);
+  ['IntersectionObserver', 'ResizeObserver', 'KeyboardEvent.key', 'URLSearchParams', 'Object.entries'].forEach((name) => {
+    assert.ok(fixes.includes(name), name + ' should be added');
+  });
+
+  step('old engine: lazy loading (IntersectionObserver) fires only once the section scrolls into view');
+  await old.waitForTimeout(400);
+  assert.equal(await old.getAttribute('#lazy', 'data-state'), 'waiting');
+  await old.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+  await old.waitForFunction(() => document.getElementById('lazy').getAttribute('data-state') === 'loaded');
+
+  step('old engine: ResizeObserver reports size changes; pages see event.key for remote keys');
+  await old.waitForFunction(() => document.body.getAttribute('data-box-width') === '250');
+  await old.keyboard.press('Enter');
+  assert.equal(await old.getAttribute('body', 'data-key'), 'Enter');
+
+  step('a working page gets no compatibility notice');
+  await old.waitForTimeout(3200);
+  assert.equal(await compatPanel().isVisible(), false);
+
+  step('"TV fixes: off" turns the polyfills off for that site');
+  await old.evaluate(() => localStorage.setItem('tizenshield:polyfills-off', '1'));
+  await old.reload();
+  // Primitives only: Playwright's own object passing needs the removed features.
+  assert.equal(await old.evaluate(() => window.__tizenShieldFixes.length), 0);
+  assert.match(await old.evaluate(() => String(window.results['Object.entries'])), /error/);
+  await old.evaluate(() => localStorage.removeItem('tizenshield:polyfills-off'));
+  oldErrors.length = 0;
+
+  const expectNotice = async (name, reason, shot) => {
+    await old.goto(fixture(name));
+    await compatPanel().waitFor({ state: 'visible', timeout: 10000 });
+    assert.match(await compatPanel().textContent(), /can't run on your TV's browser/);
+    assert.match(await compatPanel().textContent(), reason);
+    if (shot) await old.screenshot({ path: join(OUT, shot) });
+  };
+
+  step('module-only app: explains that 2017 TVs skip its code');
+  await expectNotice('compat-module', /browsers older than 2018 skip/);
+  step('code too new to parse: explains the JavaScript is too new');
+  await expectNotice('compat-syntax', /newer JavaScript/, 'compat-notice.png');
+  assert.match(await compatPanel().textContent(), /Details: 1 script error/);
+  assert.equal(await old.evaluate(() => document.activeElement.textContent), 'Go back');
+
+  step('missing feature: names it; Back on the notice goes back a page');
+  await expectNotice('compat-missing', /features your TV doesn't have \(TotallyNewBrowserFeature\)/);
+  await old.keyboard.press('Escape');
+  await old.waitForURL(fixture('compat-syntax'));
+  assert.equal(oldErrors.length, 3, 'only the deliberately broken pages report errors: ' + oldErrors.join(' | '));
+  await oldEngine.close();
   console.log('Smoke test passed. Screenshots in test/out/.');
 } finally {
   await browser.close();

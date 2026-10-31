@@ -1,10 +1,11 @@
 import { START_URL, VERSION } from './config.js';
 import { startAdHiding } from './adhide.js';
+import { checkWhenLoaded, compatReport, createCompatPanel, engineVersion } from './compat.js';
 import { findVideos, videoLinkFor } from './detect.js';
 import { DIRECTION, KEY, isEditing, keyOf, swallow } from './keys.js';
 import { createPicker } from './picker.js';
 import { move } from './spatialnav.js';
-import { adHidingOff, setAdHidingOff } from './storage.js';
+import { adHidingOff, polyfillsOff, setAdHidingOff, setPolyfillsOff } from './storage.js';
 import { createToolbar } from './toolbar.js';
 import { installFocusRing, toast } from './ui.js';
 import { hopUrl } from './url.js';
@@ -15,11 +16,14 @@ var VIDEO_HINT_DELAY_MS = 1500;
 // Runs on every website the user opens (TizenBrew injects it into each page).
 export function startSite() {
   var adOff = adHidingOff();
+  var fixesOff = polyfillsOff();
+  var fixes = window.__tizenShieldFixes || [];
   var passThrough = false;
   var videos = [];
   if (!adOff) startAdHiding(window.location.hostname);
 
   var picker = createPicker(playVideo);
+  var compatPanel = createCompatPanel({ back: goBack });
   var toolbar = createToolbar({
     open: function (text) {
       // The start page knows the chosen search engine and keeps history.
@@ -40,12 +44,19 @@ export function startSite() {
       { label: 'Bookmark', run: bookmark },
       { label: function () { return adOff ? 'Ad hiding: off' : 'Ad hiding: on'; }, run: toggleAdHiding },
       { label: function () { return passThrough ? 'Remote: to site' : 'Remote: browse'; }, run: togglePassThrough },
+      { label: function () { return fixesOff ? 'TV fixes: off' : 'TV fixes: on'; }, run: toggleFixes },
       { label: 'Info', run: diagnostics }
     ]
   });
   document.documentElement.appendChild(toolbar.root);
-  installFocusRing({ contains: function (node) { return toolbar.root.contains(node) || picker.root.contains(node); } });
+  var ourUi = [toolbar.root, picker.root, compatPanel.root];
+  installFocusRing({ contains: function (node) { return ourUi.some(function (root) { return root.contains(node); }); } });
   window.addEventListener('keydown', onKey, true);
+  checkWhenLoaded(function (result) {
+    toolbar.close();
+    picker.close();
+    compatPanel.open(result, fixes.length);
+  });
   // OK on a link to a video file plays it here instead of downloading it.
   document.addEventListener('click', function (event) {
     var video = videoLinkFor(event.target);
@@ -59,7 +70,7 @@ export function startSite() {
 
   function onKey(event) {
     var key = keyOf(event);
-    if (key === KEY.GREEN) { swallow(event); picker.close(); toolbar.toggle(); return; }
+    if (key === KEY.GREEN) { swallow(event); picker.close(); compatPanel.close(); toolbar.toggle(); return; }
     if (key === KEY.RED) { swallow(event); goHome(); return; }
     if (key === KEY.YELLOW) { swallow(event); bookmark(); return; }
     if (key === KEY.BLUE) { swallow(event); togglePassThrough(); return; }
@@ -72,6 +83,11 @@ export function startSite() {
 
     var active = document.activeElement;
     var dir = DIRECTION[key];
+    if (compatPanel.isOpen()) {
+      if (key === KEY.BACK) { swallow(event); compatPanel.close(); goBack(); return; }
+      if (dir) { swallow(event); move(dir, { scope: compatPanel.root }); }
+      return;
+    }
     if (picker.isOpen()) {
       if (key === KEY.BACK) { swallow(event); picker.close(); return; }
       if (dir) { swallow(event); move(dir, { scope: picker.root }); }
@@ -136,6 +152,12 @@ export function startSite() {
     window.location.reload();
   }
 
+  // Polyfills are installed as the page starts, so changing this reloads.
+  function toggleFixes() {
+    setPolyfillsOff(!fixesOff);
+    window.location.reload();
+  }
+
   function togglePassThrough() {
     passThrough = !passThrough;
     if (toolbar.isOpen()) toolbar.close();
@@ -144,12 +166,13 @@ export function startSite() {
       : 'Arrow keys move between links again.');
   }
 
-  // Reports the engine version, and whether this page may reach TizenBrew's
-  // local server (decides whether a future version can sync bookmarks
-  // through a TizenBrew service instead of the start page).
+  // Reports the engine version, TV fixes added, script errors, and whether
+  // this page may reach TizenBrew's local server (decides whether a future
+  // version can sync bookmarks through a TizenBrew service instead of the
+  // start page).
   function diagnostics() {
-    var match = /Chrome\/(\d+)/.exec(navigator.userAgent);
-    var summary = 'TizenShield ' + VERSION + ' | Chrome ' + (match ? match[1] : '?');
+    var summary = 'TizenShield ' + VERSION + ' | Chrome ' + engineVersion() +
+      ' | fixes: ' + (fixesOff ? 'off' : fixes.length) + ' | script errors: ' + compatReport().errors;
     if (typeof window.fetch !== 'function') {
       toast(summary + ' | no fetch()', 8000);
       return;

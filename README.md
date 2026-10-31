@@ -5,15 +5,17 @@ A remote-friendly web browser with ad hiding for Samsung Tizen TVs, built as a
 possible on Tizen): it gives the TV's built-in web engine a Brave-like start page, remote-control
 browsing and cosmetic ad hiding, on top of DNS-level ad blocking (NextDNS, AdGuard DNS or Pi-hole).
 Video files found on a page play in a full-screen player that uses the TV's hardware decoder.
+"TV fixes" add about 50 newer browser features the TV lacks, and when a site still can't run, a
+notice explains why instead of leaving a blank page.
 
-Status: v0.2, built and tested in desktop Chromium (`npm test`, `npm run smoke`).
+Status: v0.3, built and tested in desktop Chromium (`npm test`, `npm run smoke`).
 Not yet tried on a TV; see [First test on the TV](#first-test-on-the-tv).
 
 | Decision | Choice |
 |---|---|
 | Target TV | 2017 (Tizen 3.0, Chrome 47 engine), so output is ES5 |
-| Scope | Start page + toolbar over websites + ad hiding + "Play on TV player" |
-| Build | Plain JS, esbuild bundle, Babel to ES5, checked by an ES5-only parser |
+| Scope | Start page + toolbar over websites + ad hiding + "Play on TV player" + TV fixes and compatibility notice |
+| Build | Plain JS, esbuild bundle, Babel to ES5, minified, checked by an ES5-only parser |
 | Publishing | Public GitHub repo `jiljam/TizenShield` (TizenBrew loads modules through jsDelivr, which can't read private repos) |
 
 ## How it works
@@ -47,6 +49,31 @@ H.264, HEVC and AC3, and HLS (`.m3u8`) streams, which desktop browsers can't.
 - **Plays on the start page**, not over the website: no site scripts competing for the TV's
   memory, no site security policy in the way, and the decoder is released when you leave.
 
+### TV fixes and the compatibility notice
+
+The TV's engine (Chrome 47, 2015) can't be upgraded, so many current sites fail on it. There are
+two kinds of failure, and only the first can be fixed from a script:
+
+- **Missing features** (functions, objects): TizenShield adds them to every website and frame
+  before the site's code runs ("polyfills", `src/polyfills/`). Among them: `IntersectionObserver`
+  (lazy-loaded images and infinite scroll), `ResizeObserver`, `KeyboardEvent.key` (so sites that
+  check `event.key === 'Enter'` respond to the remote, including Samsung's Back, colour and media
+  keys), `URLSearchParams`, `AbortController`, `Object.entries`, `Array.flat`, `String.padStart`,
+  `Promise.finally`, `globalThis`, `Element.append`, scroll options and more. Each is added only
+  if missing. **Info** in the toolbar shows how many were added; **TV fixes: off** turns them off
+  for a site, in case one ever gets in a site's way.
+- **Newer JavaScript syntax** (`?.`, `async`, module scripts) can't be added after the fact: the
+  engine can't read the site's code at all. Many recent sites are like this.
+
+When a page is still essentially empty a few seconds after loading, a notice explains which of
+these happened: code too new to read, a named missing feature (e.g. `Proxy`), an app that only
+loads as modules (which Chrome 47 skips), or the site's own scripts failing to load (often DNS
+blocking). It offers **Go back** or **Stay on this page**.
+
+TizenBrew injects the script as each page starts, so the fixes and error recording usually come
+before the site's own scripts, but this isn't guaranteed. Errors that happen first are missed;
+the notice then appears later (10 seconds after loading) with softer wording.
+
 ```
  TizenBrew ──opens──▶ start.html ◀──#go= / #add=──┐
                        │ launcher (launcher.js)      │
@@ -60,6 +87,8 @@ H.264, HEVC and AC3, and HLS (`.m3u8`) streams, which desktop browsers can't.
 | `src/launcher.js` | Start page router (home or player) and the home screen: search, engine switch, bookmarks, history |
 | `src/player.js` | Full-screen hardware player: controls, batched seeking, resume, audio tracks, errors |
 | `src/detect.js`, `src/picker.js`, `src/video.js` | Finding videos on a page, the "which video?" chooser, URL/format helpers |
+| `src/polyfills/` | TV fixes: missing built-ins, page APIs, URL/abort helpers, observers |
+| `src/compat.js`, `src/modal.js` | Script-error recording, the "can't run on your TV's browser" notice, shared dialog |
 | `src/site.js`, `src/toolbar.js` | On websites: remote keys, Green toolbar, Back, Home, Bookmark |
 | `src/spatialnav.js` | Arrow keys move between links; scrolls when nothing is in reach |
 | `src/adhide.js`, `src/filters.js` | Cosmetic filters; script fallback for sites whose CSP blocks `<style>` |
@@ -125,7 +154,8 @@ open these once in any browser, then restart TizenBrew:
 ```sh
 npm install
 npm run build   # dist/userScript.js + dist/start.html; fails on non-ES5 output or APIs Chrome 47 lacks
-npm test        # unit tests (address parsing, storage, video helpers)
+                #   (--no-minify for readable output)
+npm test        # unit tests (address parsing, storage, video helpers, polyfills vs native)
 npm run smoke   # end-to-end in desktop Chromium; needs Playwright; screenshots in test/out/
 ```
 
@@ -154,6 +184,9 @@ Desktop tests can't answer these; please note what happens:
    archive.org: open a film's page, then its download options): does **Play on TV player**
    appear and play, do Play/Pause and Fast-forward on the remote work, and does seeking work?
    If a video has two audio languages, does Yellow switch them?
+8. **TV fixes:** on a site that used to be blank or broken, press Green → **Info**: how many
+   fixes were added? Does a site now work, or does the "can't run on your TV's browser" notice
+   appear, and with which reason?
 
 ## Known limitations
 
@@ -168,6 +201,8 @@ Desktop tests can't answer these; please note what happens:
 - Elements inside scrollable boxes on a page can be reached, but the box itself isn't scrolled
   by the arrows.
 - The page is shown at the TV's default zoom; tiny desktop layouts stay tiny.
+- TV fixes can't make sites built for modern browsers work when their code uses newer syntax;
+  the notice explains those instead.
 - The player can't play YouTube, Dailymotion or other sites that stream through Media Source;
   only plain video files and HLS links. It has no subtitles yet.
 - Some hosts only serve a video to their own pages (they check the referring page or need a
